@@ -1,11 +1,58 @@
-case class Point3D(x: Double, y: Double, z: Double)
+import scala.io.Source
 
-def vectorLength(a: Point3D, b: Point3D): Double = {
-  val vx = b.x - a.x
-  val vy = b.y - a.y
-  val vz = b.z - a.z
-  Math.sqrt(vx*vx + vy*vy + vz*vz)
+
+case class Point3D(x: Double, y: Double, z: Double)
+case class PointSphere(lat: Double, lng: Double, alt: Double)
+
+
+def Data(url: String): String = {
+  /**
+  Grab data from url.
+  */
+  Source.fromURL(url).mkString
 }
+
+
+def parseData(data: String): (String, Array[Array[String]]) = {
+  /**
+  Convert data into (Seed, Array of records)
+  */
+  val splitData = data.split("\n")
+
+  val seed = splitData(0).split(" ")(1)
+  val route = splitData.last.split(",")
+
+  val routeStart = Array("Start", route(1), route(2), "1")
+  val routeEnd = Array("End", route(3), route(4), "1")
+
+  val tempdata = splitData.drop(1).dropRight(1).map(_.split(","))
+
+  var fullData = routeStart +: tempdata :+ routeEnd
+  (seed, fullData)
+}
+
+
+def toRadians(a: Double): Double = a * Math.PI / 180.0
+
+
+def convertToCartesian(point: PointSphere, radius: Double): Point3D = {
+  /**
+   * order in input data: latitude,longitude,altitude
+  I add altitude to radius to shift orbit so that the conventional formula still makes sense.
+  Just assume the point is on the sphere with larger radius.
+  */
+
+  val adjustedRadius = radius + point.alt
+  val lat = toRadians(point.lat)
+  val lng = toRadians(point.lng)
+  
+  val x = adjustedRadius * Math.cos(lat) * Math.cos(lng)
+  val y = adjustedRadius * Math.cos(lat) * Math.sin(lng)
+  val z = adjustedRadius * Math.sin(lat)
+  
+  Point3D(x, y, z)
+}
+
 
 def isIntersectingGlobe(a: Point3D, b: Point3D, c: Point3D, radius: Double): Boolean = {
   var retval = false
@@ -35,70 +82,110 @@ def isIntersectingGlobe(a: Point3D, b: Point3D, c: Point3D, radius: Double): Boo
   if ( discriminant >= 0 ) { retval = true }
 
   retval
-
-  /*
-  // Solutions, not needed here
-  val t1 = ( -B - Math.sqrt(discriminant) ) / (2.0 * A)
-  val tt1 = 1 - t1
-  // if D == 0
-  val solution1 = ( a.x * tt1 + t1 * b.x, a.y * tt1 + t1 * b.y, a.z * tt1 + t1 * b.z )
-  // if D > 0
-  val t2 = ( -B + Math.sqrt(discriminant) ) / (2.0 * A)
-  val tt2 = 1 - t2
-  val solution2 = (a.x * tt2 + t2 * b.x, a.y * tt2 + t2 * b.y, a.z * tt2 + t2 * b.z ) 
-  */
 }
 
-/*
-Small utility to add radius to every coordinate, to make sure the points are OUTSIDE the globe.
-*/
-def addRadius(p: Point3D, radius: Double): Point3D = {
-  def util(i: Double): Double = {
-    if (i >= 0.0) {
-      i + radius
-    } else {
-      i - radius
+
+def vectorLength(a: Point3D, b: Point3D): Double = {
+  val vx = b.x - a.x
+  val vy = b.y - a.y
+  val vz = b.z - a.z
+  Math.sqrt(vx*vx + vy*vy + vz*vz)
+}
+
+
+def minDistance(dist: Array[Double], Q: Array[Int]): Int = {
+  var min = Double.MaxValue
+  var min_index = -1
+
+  for (v <- (0 until dist.length) ) {
+    if (Q.contains(v) && dist(v) <= min) {
+      min = dist(v)
+      min_index = v
     }
   }
-  Point3D(util(p.x), util(p.y), util(p.z))
+  min_index
 }
 
 
-val input = scala.io.Source.fromFile("/m/nbe/home/smirnod1/reaktor.csv").mkString.split("\n")
+def Dijkstra(AdjacencyMatrix: Array[Array[Double]], source: Int): (Array[Double], Array[Int]) = {
+  var Q = (0 until ndim).toArray
+  val dist = Array.fill(ndim)(Double.MaxValue)
+  val previous = Array.fill(ndim)(999999)
+
+  dist(source) = 0.0
+
+  while (Q.size > 0) {
+    var u = minDistance(dist, Q)
+    Q = Q.filterNot(_ == u)
+
+    for ( v <- (0 until ndim) ) {
+      // if neighbour
+      if ( Q.contains(v) && AdjacencyMatrix(u)(v) != 0.0 ) {
+        println("hit")
+        val alt = dist(u) + AdjacencyMatrix(u)(v)
+        if (alt < dist(v)) {
+          dist(v) = alt
+          previous(v) = u
+        }
+      }
+    }
+  }
+  (dist, previous)
+}
+
+
+def constructPath(shortestPath: (Array[Double], Array[Int]), target: Int, undefined: Int): (Double, Array[Int]) = {
+  /**
+  shortestPath - output of Dijkstra
+  target - target node
+  undefined - Integer specifying what value was used to mark 'undefined', used Wiki for algorithm
+  */
+  var S = Array[Int]()
+  var u = target
+
+  val previous = shortestPath._2
+
+  while (previous(u) != 999999) {
+    S = S :+ u
+    u = previous(u)
+  }
+  S = S :+ u
+  (shortestPath._1(target), S)
+}
+
+
+// Definitions done, now with actual processing
+val url = "https://space-fast-track.herokuapp.com/generate"
+val data = Data(url)
+val parsedData = parseData(data)
 
 val radius = 6371.0
 val c = Point3D(0.0, 0.0, 0.0)
 
-// Split line, convert to Point3D and add radius to each coordinate
-val data = input.map { line =>
-  val temp = line.split(",")
-  (temp(0), addRadius( Point3D(temp(1).toDouble, temp(2).toDouble, temp(3).toDouble), radius) )
+val seed = parsedData._1
+val fullData = parsedData._2
+
+val dataPoints = fullData.map { line =>
+  (line(0), PointSphere(line(1).toDouble, line(2).toDouble, line(3).toDouble) )
 }
 
-// My starting and ending nodes
-val routeStart = addRadius(Point3D(-86.92978121293685, -145.50577813916377, 0), radius)
-val routeEnd = addRadius(Point3D(61.678740828293655, 37.37566732303392, 0), radius)
-
-// Append the nodes to data
-var dataWithRoute = ("Start", routeStart) +: data :+ ("End", routeEnd)
-
-// String names are pain to work with, convert to Int
-val uniqueNames = dataWithRoute.map( i => i._1 ).zipWithIndex.toMap
-val dataMap = dataWithRoute.map { i =>
-  (uniqueNames(i._1), i._2)
+// convert satellite names to Integer Ids, convenient later
+val uniqueNames = dataPoints.map( i => i._1 ).zipWithIndex.toMap
+val finalData = dataPoints.map { i =>
+  ( uniqueNames(i._1), convertToCartesian(i._2, radius) )
 }.toMap
 
-// Adjacency matrix with weights == distances
-val ndim = dataWithRoute.size
+// adjacency matrix
+val ndim = finalData.size
 val AdjacencyMatrix = Array.fill(ndim, ndim)(0.0)
+// for every node, check if it is possible to reach every other node
 val allnodes = (0 until ndim)
-// Only keep the edges that don't intersect with globe
 for (i <- allnodes; j <- allnodes) {
   if (i != j) {
-    if ( isIntersectingGlobe( dataMap(i), dataMap(j), c, radius ) ) { 
+    if ( isIntersectingGlobe( finalData(i), finalData(j), c, radius ) ) { 
       AdjacencyMatrix(i)(j) = 0.0
     } else {
-      val vlen = vectorLength(dataMap(i), dataMap(j))
+      val vlen = vectorLength(finalData(i), finalData(j))
       AdjacencyMatrix(i)(j) = vlen
       AdjacencyMatrix(j)(i) = vlen
       println("Hit!")
@@ -106,6 +193,15 @@ for (i <- allnodes; j <- allnodes) {
   }
 }
 
-// Dijkstra's algorithm
+// important test for data usability
+val a = finalData(0)
+val b = finalData(21)
+isIntersectingGlobe(a, b, c, radius)
+println(AdjacencyMatrix(0).sum == 0 && AdjacencyMatrix(21).sum == 0)
+
+val shortestPath = Dijkstra(AdjacencyMatrix, 0)
+val result = constructPath(shortestPath, 21, 999999)
+
+
 
 
