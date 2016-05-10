@@ -1,4 +1,5 @@
 import scala.io.Source
+import scala.collection.immutable.Map
 
 
 case class Point3D(x: Double, y: Double, z: Double)
@@ -22,8 +23,8 @@ def parseData(data: String): (String, Array[Array[String]]) = {
   val seed = splitData(0).split(" ")(1)
   val route = splitData.last.split(",")
 
-  val routeStart = Array("Start", route(1), route(2), "1")
-  val routeEnd = Array("End", route(3), route(4), "1")
+  val routeStart = Array("Start", route(1), route(2), "10")
+  val routeEnd = Array("End", route(3), route(4), "10")
 
   val tempdata = splitData.drop(1).dropRight(1).map(_.split(","))
 
@@ -38,6 +39,7 @@ def toRadians(a: Double): Double = a * Math.PI / 180.0
 def convertToCartesian(point: PointSphere, radius: Double): Point3D = {
   /**
    * order in input data: latitude,longitude,altitude
+  http://gis.stackexchange.com/questions/4147/lat-lon-alt-to-spherical-or-cartesian-coordinates
   I add altitude to radius to shift orbit so that the conventional formula still makes sense.
   Just assume the point is on the sphere with larger radius.
   */
@@ -55,7 +57,6 @@ def convertToCartesian(point: PointSphere, radius: Double): Point3D = {
 
 
 def isIntersectingGlobe(a: Point3D, b: Point3D, c: Point3D, radius: Double): Boolean = {
-  var retval = false
   // http://stackoverflow.com/questions/5883169/intersection-between-a-line-and-a-sphere
   // c - sphere center, assuming origin (0,0,0)
   val cx = c.x
@@ -71,17 +72,15 @@ def isIntersectingGlobe(a: Point3D, b: Point3D, c: Point3D, radius: Double): Boo
   val vz = b.z - pz
 
   val A = vx * vx + vy * vy + vz * vz
-  val B = 2.0 * (px * vx + py * vy + pz * vz + vx * cx - vy * cy - vz * cz)
+  val B = 2.0 * (px * vx + py * vy + pz * vz - vx * cx - vy * cy - vz * cz)
   val C = px * px - 2 * px * cx + cx * cx + py * py - 2 * py * cy + cy * cy + pz * pz - 2 * pz * cz + cz * cz - radius * radius
 
-  val discriminant = B * B - 4 * A * C
-  
+  val discriminant = (B * B) - (4 * A * C)
   // if discriminant > 0: two intersection points
   // if discriminant == 0: one intersection point
   // if discriminant < 0: no intersection points
-  if ( discriminant >= 0 ) { retval = true }
 
-  retval
+  discriminant >= 0
 }
 
 
@@ -90,6 +89,27 @@ def vectorLength(a: Point3D, b: Point3D): Double = {
   val vy = b.y - a.y
   val vz = b.z - a.z
   Math.sqrt(vx*vx + vy*vy + vz*vz)
+}
+
+
+def getAdjacencyMatrix(finalData: Map[Int, Point3D], c: Point3D, radius: Double): Array[Array[Double]] = {
+  val ndim = finalData.size
+  val AdjacencyMatrix = Array.fill(ndim, ndim)(0.0)
+  // for every node, check if it is possible to reach every other node
+  val allnodes = (0 until ndim)
+  for (i <- allnodes; j <- allnodes) {
+    if (i != j) {
+      if ( isIntersectingGlobe( finalData(i), finalData(j), c, radius ) ) { 
+        AdjacencyMatrix(i)(j) = 0.0
+      } else {
+        val vlen = vectorLength(finalData(i), finalData(j))
+        AdjacencyMatrix(i)(j) = vlen
+        AdjacencyMatrix(j)(i) = vlen
+        println("Found link between nodes: " + i + " and " + j)
+      }
+    }
+  }
+  AdjacencyMatrix
 }
 
 
@@ -107,9 +127,10 @@ def minDistance(dist: Array[Double], Q: Array[Int]): Int = {
 }
 
 
-def Dijkstra(AdjacencyMatrix: Array[Array[Double]], source: Int): (Array[Double], Array[Int]) = {
+def Dijkstra(AdjacencyMatrix: Array[Array[Double]], source: Int, ndim: Int): (Array[Double], Array[Int]) = {
   var Q = (0 until ndim).toArray
   val dist = Array.fill(ndim)(Double.MaxValue)
+  // tree
   val previous = Array.fill(ndim)(999999)
 
   dist(source) = 0.0
@@ -139,6 +160,8 @@ def constructPath(shortestPath: (Array[Double], Array[Int]), target: Int, undefi
   shortestPath - output of Dijkstra
   target - target node
   undefined - Integer specifying what value was used to mark 'undefined', used Wiki for algorithm
+
+  Trace back the path, if node is reachable.
   */
   var S = Array[Int]()
   var u = target
@@ -150,6 +173,7 @@ def constructPath(shortestPath: (Array[Double], Array[Int]), target: Int, undefi
     u = previous(u)
   }
   S = S :+ u
+
   (shortestPath._1(target), S)
 }
 
@@ -175,33 +199,15 @@ val finalData = dataPoints.map { i =>
   ( uniqueNames(i._1), convertToCartesian(i._2, radius) )
 }.toMap
 
-// adjacency matrix
 val ndim = finalData.size
-val AdjacencyMatrix = Array.fill(ndim, ndim)(0.0)
-// for every node, check if it is possible to reach every other node
-val allnodes = (0 until ndim)
-for (i <- allnodes; j <- allnodes) {
-  if (i != j) {
-    if ( isIntersectingGlobe( finalData(i), finalData(j), c, radius ) ) { 
-      AdjacencyMatrix(i)(j) = 0.0
-    } else {
-      val vlen = vectorLength(finalData(i), finalData(j))
-      AdjacencyMatrix(i)(j) = vlen
-      AdjacencyMatrix(j)(i) = vlen
-      println("Hit!")
-    }
-  }
-}
+val AdjacencyMatrix = getAdjacencyMatrix(finalData, c, radius)
+
 
 // important test for data usability
 val a = finalData(0)
 val b = finalData(21)
 isIntersectingGlobe(a, b, c, radius)
-println(AdjacencyMatrix(0).sum == 0 && AdjacencyMatrix(21).sum == 0)
+println(AdjacencyMatrix(0).sum != 0 && AdjacencyMatrix(21).sum != 0)
 
-val shortestPath = Dijkstra(AdjacencyMatrix, 0)
+val shortestPath = Dijkstra(AdjacencyMatrix, 0, ndim)
 val result = constructPath(shortestPath, 21, 999999)
-
-
-
-
