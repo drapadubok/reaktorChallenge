@@ -57,30 +57,7 @@ def convertToCartesian(point: PointSphere, radius: Double): Point3D = {
 
 
 def isIntersectingGlobe(a: Point3D, b: Point3D, c: Point3D, radius: Double): Boolean = {
-  // http://stackoverflow.com/questions/5883169/intersection-between-a-line-and-a-sphere
-  // c - sphere center, assuming origin (0,0,0)
-  val cx = c.x
-  val cy = c.y
-  val cz = c.z
-
-  val px = a.x
-  val py = a.y
-  val pz = a.z
-
-  val vx = b.x - px
-  val vy = b.y - py
-  val vz = b.z - pz
-
-  val A = vx * vx + vy * vy + vz * vz
-  val B = 2.0 * (px * vx + py * vy + pz * vz - vx * cx - vy * cy - vz * cz)
-  val C = px * px - 2 * px * cx + cx * cx + py * py - 2 * py * cy + cy * cy + pz * pz - 2 * pz * cz + cz * cz - radius * radius
-
-  val discriminant = (B * B) - (4 * A * C)
-  // if discriminant > 0: two intersection points
-  // if discriminant == 0: one intersection point
-  // if discriminant < 0: no intersection points
-
-  discriminant >= 0
+  // CURRENT IMPLEMENTATION IS WRONG; CORRECT!
 }
 
 
